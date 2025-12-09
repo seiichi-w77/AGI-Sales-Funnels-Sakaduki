@@ -75,7 +75,7 @@ export async function handleCheckoutCompleted(
 export async function handleSubscriptionCreated(
   subscription: Stripe.Subscription
 ): Promise<WebhookHandlerResult> {
-  const { id, customer, status, current_period_start, current_period_end, metadata } = subscription
+  const { id, customer, status, metadata } = subscription
 
   const workspaceId = metadata?.workspaceId
 
@@ -88,8 +88,6 @@ export async function handleSubscriptionCreated(
       subscriptionId: id,
       customerId: customer,
       status,
-      currentPeriodStart: new Date(current_period_start * 1000),
-      currentPeriodEnd: new Date(current_period_end * 1000),
       workspaceId,
     },
   }
@@ -106,8 +104,6 @@ export async function handleSubscriptionUpdated(
     status,
     cancel_at_period_end,
     canceled_at,
-    current_period_start,
-    current_period_end,
     metadata,
   } = subscription
 
@@ -123,8 +119,6 @@ export async function handleSubscriptionUpdated(
       status,
       cancelAtPeriodEnd: cancel_at_period_end,
       canceledAt: canceled_at ? new Date(canceled_at * 1000) : null,
-      currentPeriodStart: new Date(current_period_start * 1000),
-      currentPeriodEnd: new Date(current_period_end * 1000),
       workspaceId,
     },
   }
@@ -157,7 +151,7 @@ export async function handleSubscriptionDeleted(
 export async function handleInvoicePaymentSucceeded(
   invoice: Stripe.Invoice
 ): Promise<WebhookHandlerResult> {
-  const { id, customer, subscription, amount_paid, currency, status, hosted_invoice_url, invoice_pdf } = invoice
+  const { id, customer, amount_paid, currency, status, hosted_invoice_url, invoice_pdf } = invoice
 
   // TODO: Create invoice record in database
   // TODO: Send receipt email
@@ -168,12 +162,11 @@ export async function handleInvoicePaymentSucceeded(
     data: {
       invoiceId: id,
       customerId: customer,
-      subscriptionId: subscription,
       amountPaid: amount_paid,
       currency,
       status,
       hostedInvoiceUrl: hosted_invoice_url,
-      invoicePdf: invoice_pdf,
+      invoicePdf: invoice_pdf ?? null,
     },
   }
 }
@@ -184,7 +177,7 @@ export async function handleInvoicePaymentSucceeded(
 export async function handleInvoicePaymentFailed(
   invoice: Stripe.Invoice
 ): Promise<WebhookHandlerResult> {
-  const { id, customer, subscription, amount_due, currency, next_payment_attempt } = invoice
+  const { id, customer, amount_due, currency, next_payment_attempt } = invoice
 
   // TODO: Update subscription status in database
   // TODO: Send payment failed notification email
@@ -195,7 +188,6 @@ export async function handleInvoicePaymentFailed(
     data: {
       invoiceId: id,
       customerId: customer,
-      subscriptionId: subscription,
       amountDue: amount_due,
       currency,
       nextPaymentAttempt: next_payment_attempt

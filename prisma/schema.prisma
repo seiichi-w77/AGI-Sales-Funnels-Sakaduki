@@ -305,6 +305,7 @@ model Product {
   orderItems     OrderItem[]
   funnelProducts FunnelProduct[]
   courseProduct  Course?
+  cartItems      CartItem[]
 
   @@unique([workspaceId, slug])
   @@index([workspaceId])
@@ -344,6 +345,7 @@ model ProductPrice {
 
   product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
   orderItems OrderItem[]
+  cartItems  CartItem[]
 
   @@map("product_prices")
 }
@@ -370,6 +372,7 @@ model ProductVariant {
 
   product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
   orderItems OrderItem[]
+  cartItems  CartItem[]
 
   @@map("product_variants")
 }
@@ -1131,4 +1134,108 @@ enum ActorType {
   SYSTEM
   API
   WEBHOOK
+}
+
+// ============================================
+// Cart & Checkout
+// ============================================
+
+model Cart {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String?
+  sessionId   String?
+  status      CartStatus @default(ACTIVE)
+  couponId    String?
+  subtotal    Int      @default(0)
+  discount    Int      @default(0)
+  tax         Int      @default(0)
+  total       Int      @default(0)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items     CartItem[]
+  coupon    Coupon?    @relation(fields: [couponId], references: [id])
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([sessionId])
+  @@map("carts")
+}
+
+enum CartStatus {
+  ACTIVE
+  ABANDONED
+  CONVERTED
+}
+
+model CartItem {
+  id          String   @id @default(cuid())
+  cartId      String
+  productId   String
+  priceId     String
+  variantId   String?
+  quantity    Int      @default(1)
+  unitPrice   Int
+  currency    String   @default("USD")
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product   Product        @relation(fields: [productId], references: [id])
+  price     ProductPrice   @relation(fields: [priceId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([cartId])
+  @@map("cart_items")
+}
+
+model Coupon {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  code         String   @unique
+  name         String?
+  type         CouponType @default(PERCENTAGE)
+  value        Int
+  maxDiscount  Int?
+  usageLimit   Int?
+  usageCount   Int      @default(0)
+  minPurchase  Int?
+  isActive     Boolean  @default(true)
+  startsAt     DateTime?
+  expiresAt    DateTime?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  carts      Cart[]
+
+  @@index([workspaceId])
+  @@index([code])
+  @@map("coupons")
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model Customer {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  userId           String?
+  email            String
+  name             String?
+  phone            String?
+  stripeCustomerId String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+  @@index([email])
+  @@map("customers")
 }

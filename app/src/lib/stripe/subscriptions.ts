@@ -195,7 +195,7 @@ export async function listInvoices(
  */
 export async function getInvoicePdfUrl(invoiceId: string): Promise<string | null> {
   const invoice = await stripe.invoices.retrieve(invoiceId)
-  return invoice.invoice_pdf
+  return invoice.invoice_pdf ?? null
 }
 
 /**
@@ -260,7 +260,8 @@ export async function listPrices(productId: string): Promise<Stripe.ApiList<Stri
  */
 export async function getUpcomingInvoice(customerId: string): Promise<Stripe.Invoice | null> {
   try {
-    return await stripe.invoices.retrieveUpcoming({
+    // Use createPreview for Stripe v20+
+    return await stripe.invoices.createPreview({
       customer: customerId,
     })
   } catch {
