@@ -1,0 +1,1134 @@
+// AGI Sales Funnels Sakaduki - Database Schema
+// Based on ClickFunnels 2.0 Clone Requirements
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// User & Authentication
+// ============================================
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  passwordHash        String?
+  firstName           String?
+  lastName            String?
+  profileImageUrl     String?
+  timezone            String    @default("UTC")
+  language            String    @default("en")
+  phoneNumber         String?
+  status              UserStatus @default(ACTIVE)
+  isEmailVerified     Boolean   @default(false)
+  emailVerifiedAt     DateTime?
+  passwordChangedAt   DateTime?
+  lastLoginAt         DateTime?
+  twoFactorEnabled    Boolean   @default(false)
+  twoFactorSecret     String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relations
+  accounts            Account[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  workspaces          WorkspaceMember[]
+  ownedWorkspaces     Workspace[]  @relation("WorkspaceOwner")
+  auditLogs           AuditLog[]   @relation("AuditLogActor")
+  contacts            Contact[]    @relation("ContactOwner")
+
+  @@index([email])
+  @@map("users")
+}
+
+enum UserStatus {
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  DELETED
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  userAgent    String?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// Workspace & Team
+// ============================================
+
+model Workspace {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  description     String?
+  logoUrl         String?
+  ownerId         String
+  settings        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  owner           User               @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members         WorkspaceMember[]
+  products        Product[]
+  contacts        Contact[]
+  funnels         Funnel[]
+  auditLogs       AuditLog[]
+  subscriptions   Subscription[]
+  invoices        Invoice[]
+  workflows       Workflow[]
+  emailCampaigns  EmailCampaign[]
+  courses         Course[]
+
+  @@index([slug])
+  @@index([ownerId])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  permissions Json?
+  invitedAt   DateTime @default(now())
+  joinedAt    DateTime?
+  status      MemberStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_members")
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum MemberStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  REMOVED
+}
+
+// ============================================
+// Subscription & Billing
+// ============================================
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  planId               String
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeSubscriptionId String?  @unique
+  stripeCustomerId     String?
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  canceledAt           DateTime?
+  cancelReason         String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan      Plan      @relation(fields: [planId], references: [id])
+  invoices  Invoice[]
+
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  TRIALING
+  PAUSED
+}
+
+model Plan {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  priceMonthly  Int
+  priceYearly   Int
+  features      Json
+  limits        Json
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Invoice {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  subscriptionId  String?
+  stripeInvoiceId String?  @unique
+  number          String   @unique
+  status          InvoiceStatus @default(DRAFT)
+  subtotal        Int
+  tax             Int      @default(0)
+  total           Int
+  currency        String   @default("USD")
+  paidAt          DateTime?
+  dueDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  items        InvoiceItem[]
+
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int      @default(1)
+  unitPrice   Int
+  amount      Int
+  createdAt   DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+// ============================================
+// Products & Commerce
+// ============================================
+
+model Product {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  slug            String
+  description     String?  @db.Text
+  shortDescription String?
+  imageUrl        String?
+  type            ProductType @default(DIGITAL)
+  status          ProductStatus @default(DRAFT)
+  sku             String?
+  barcode         String?
+  trackInventory  Boolean  @default(false)
+  inventoryCount  Int      @default(0)
+  weight          Decimal?
+  weightUnit      String?
+  taxable         Boolean  @default(true)
+  taxClassId      String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prices         ProductPrice[]
+  variants       ProductVariant[]
+  orderItems     OrderItem[]
+  funnelProducts FunnelProduct[]
+  courseProduct  Course?
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@map("products")
+}
+
+enum ProductType {
+  DIGITAL
+  PHYSICAL
+  SERVICE
+  SUBSCRIPTION
+  COURSE
+  BUNDLE
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model ProductPrice {
+  id              String   @id @default(cuid())
+  productId       String
+  name            String?
+  type            PriceType @default(ONE_TIME)
+  amount          Int
+  currency        String   @default("USD")
+  interval        String?  // month, year, etc.
+  intervalCount   Int?     @default(1)
+  trialDays       Int?
+  installments    Int?
+  isDefault       Boolean  @default(false)
+  stripePriceId   String?  @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@map("product_prices")
+}
+
+enum PriceType {
+  ONE_TIME
+  RECURRING
+  PAYMENT_PLAN
+}
+
+model ProductVariant {
+  id            String   @id @default(cuid())
+  productId     String
+  name          String
+  sku           String?
+  price         Int?
+  compareAtPrice Int?
+  inventoryCount Int     @default(0)
+  options       Json?
+  imageUrl      String?
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@map("product_variants")
+}
+
+// ============================================
+// Orders & Transactions
+// ============================================
+
+model Order {
+  id                  String   @id @default(cuid())
+  workspaceId         String
+  contactId           String?
+  orderNumber         String   @unique
+  status              OrderStatus @default(PENDING)
+  email               String
+  phone               String?
+  billingAddress      Json?
+  shippingAddress     Json?
+  subtotal            Int
+  discountTotal       Int      @default(0)
+  taxTotal            Int      @default(0)
+  shippingTotal       Int      @default(0)
+  total               Int
+  currency            String   @default("USD")
+  notes               String?  @db.Text
+  metadata            Json?
+  paidAt              DateTime?
+  fulfilledAt         DateTime?
+  canceledAt          DateTime?
+  cancelReason        String?
+  stripePaymentIntentId String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  contact     Contact?      @relation(fields: [contactId], references: [id])
+  items       OrderItem[]
+  transactions Transaction[]
+  fulfillments Fulfillment[]
+
+  @@index([workspaceId])
+  @@index([contactId])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  FAILED
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  productId   String?
+  priceId     String?
+  variantId   String?
+  name        String
+  description String?
+  quantity    Int      @default(1)
+  unitPrice   Int
+  totalPrice  Int
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id])
+  price   ProductPrice?   @relation(fields: [priceId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("order_items")
+}
+
+model Transaction {
+  id                String   @id @default(cuid())
+  orderId           String
+  type              TransactionType
+  status            TransactionStatus @default(PENDING)
+  amount            Int
+  currency          String   @default("USD")
+  gateway           String   // stripe, paypal, etc.
+  gatewayTransactionId String?
+  gatewayResponse   Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+enum TransactionType {
+  CHARGE
+  REFUND
+  CAPTURE
+  VOID
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+model Fulfillment {
+  id            String   @id @default(cuid())
+  orderId       String
+  status        FulfillmentStatus @default(PENDING)
+  trackingNumber String?
+  trackingUrl   String?
+  carrier       String?
+  shippedAt     DateTime?
+  deliveredAt   DateTime?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("fulfillments")
+}
+
+enum FulfillmentStatus {
+  PENDING
+  SHIPPED
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+  CANCELED
+}
+
+// ============================================
+// Contacts & CRM
+// ============================================
+
+model Contact {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  ownerId         String?
+  email           String
+  firstName       String?
+  lastName        String?
+  phone           String?
+  company         String?
+  jobTitle        String?
+  address         Json?
+  timezone        String?
+  language        String?
+  source          String?
+  status          ContactStatus @default(ACTIVE)
+  score           Int      @default(0)
+  tags            String[]
+  customFields    Json?
+  lastActivityAt  DateTime?
+  subscribedAt    DateTime?
+  unsubscribedAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace       Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner           User?             @relation("ContactOwner", fields: [ownerId], references: [id])
+  orders          Order[]
+  activities      ContactActivity[]
+  emailEvents     EmailEvent[]
+  courseEnrollments CourseEnrollment[]
+  lineAccounts    LineAccount[]
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+  @@index([email])
+  @@map("contacts")
+}
+
+enum ContactStatus {
+  ACTIVE
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+  ARCHIVED
+}
+
+model ContactActivity {
+  id          String   @id @default(cuid())
+  contactId   String
+  type        String
+  description String?
+  metadata    Json?
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@map("contact_activities")
+}
+
+// ============================================
+// Funnels & Pages
+// ============================================
+
+model Funnel {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  slug          String
+  type          FunnelType @default(LEAD_MAGNET)
+  status        FunnelStatus @default(DRAFT)
+  description   String?
+  thumbnail     String?
+  settings      Json?
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  steps     FunnelStep[]
+  products  FunnelProduct[]
+  analytics FunnelAnalytics[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@map("funnels")
+}
+
+enum FunnelType {
+  LEAD_MAGNET
+  BOOK
+  CART
+  WEBINAR
+  VSL
+  STOREFRONT
+  CUSTOM
+}
+
+enum FunnelStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model FunnelStep {
+  id          String   @id @default(cuid())
+  funnelId    String
+  name        String
+  slug        String
+  type        FunnelStepType
+  sortOrder   Int      @default(0)
+  settings    Json?
+  pageContent Json?
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  funnel    Funnel              @relation(fields: [funnelId], references: [id], onDelete: Cascade)
+  variants  FunnelStepVariant[]
+
+  @@unique([funnelId, slug])
+  @@map("funnel_steps")
+}
+
+enum FunnelStepType {
+  OPTIN
+  SALES
+  UPSELL
+  DOWNSELL
+  ORDER_FORM
+  CHECKOUT
+  THANK_YOU
+  WEBINAR
+  MEMBER
+  CUSTOM
+}
+
+model FunnelStepVariant {
+  id          String   @id @default(cuid())
+  stepId      String
+  name        String
+  weight      Int      @default(50)
+  pageContent Json?
+  isControl   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  step FunnelStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@map("funnel_step_variants")
+}
+
+model FunnelProduct {
+  id        String   @id @default(cuid())
+  funnelId  String
+  productId String
+  settings  Json?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  funnel  Funnel  @relation(fields: [funnelId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([funnelId, productId])
+  @@map("funnel_products")
+}
+
+model FunnelAnalytics {
+  id            String   @id @default(cuid())
+  funnelId      String
+  date          DateTime @db.Date
+  visitors      Int      @default(0)
+  uniqueVisitors Int     @default(0)
+  pageViews     Int      @default(0)
+  optins        Int      @default(0)
+  sales         Int      @default(0)
+  revenue       Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  funnel Funnel @relation(fields: [funnelId], references: [id], onDelete: Cascade)
+
+  @@unique([funnelId, date])
+  @@map("funnel_analytics")
+}
+
+// ============================================
+// Email & Broadcasts
+// ============================================
+
+model EmailCampaign {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  subject       String
+  preheader     String?
+  fromName      String
+  fromEmail     String
+  replyTo       String?
+  content       Json
+  contentText   String?  @db.Text
+  type          EmailCampaignType @default(BROADCAST)
+  status        EmailCampaignStatus @default(DRAFT)
+  audienceRules Json?
+  scheduledAt   DateTime?
+  sentAt        DateTime?
+  totalSent     Int      @default(0)
+  totalOpened   Int      @default(0)
+  totalClicked  Int      @default(0)
+  totalBounced  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  events    EmailEvent[]
+
+  @@index([workspaceId])
+  @@map("email_campaigns")
+}
+
+enum EmailCampaignType {
+  BROADCAST
+  AUTOMATION
+  TRANSACTIONAL
+}
+
+enum EmailCampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  CANCELED
+}
+
+model EmailEvent {
+  id         String   @id @default(cuid())
+  campaignId String?
+  contactId  String
+  type       EmailEventType
+  email      String
+  metadata   Json?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  campaign EmailCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  contact  Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([contactId])
+  @@map("email_events")
+}
+
+enum EmailEventType {
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  COMPLAINED
+  UNSUBSCRIBED
+}
+
+// ============================================
+// Workflows & Automation
+// ============================================
+
+model Workflow {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  trigger     Json
+  status      WorkflowStatus @default(DRAFT)
+  isActive    Boolean  @default(false)
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  steps     WorkflowStep[]
+  executions WorkflowExecution[]
+
+  @@index([workspaceId])
+  @@map("workflows")
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model WorkflowStep {
+  id          String   @id @default(cuid())
+  workflowId  String
+  type        WorkflowStepType
+  config      Json
+  sortOrder   Int      @default(0)
+  nextStepId  String?
+  conditions  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_steps")
+}
+
+enum WorkflowStepType {
+  SEND_EMAIL
+  DELAY
+  CONDITION
+  ADD_TAG
+  REMOVE_TAG
+  UPDATE_CONTACT
+  WEBHOOK
+  START_WORKFLOW
+  END
+}
+
+model WorkflowExecution {
+  id         String   @id @default(cuid())
+  workflowId String
+  contactId  String?
+  status     WorkflowExecutionStatus @default(RUNNING)
+  currentStep String?
+  data       Json?
+  startedAt  DateTime @default(now())
+  completedAt DateTime?
+  error      String?
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@map("workflow_executions")
+}
+
+enum WorkflowExecutionStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELED
+  WAITING
+}
+
+// ============================================
+// Courses & LMS
+// ============================================
+
+model Course {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  productId     String?  @unique
+  name          String
+  slug          String
+  description   String?  @db.Text
+  thumbnail     String?
+  status        CourseStatus @default(DRAFT)
+  settings      Json?
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product     Product?           @relation(fields: [productId], references: [id])
+  modules     CourseModule[]
+  enrollments CourseEnrollment[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@map("courses")
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model CourseModule {
+  id          String   @id @default(cuid())
+  courseId    String
+  name        String
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons CourseLesson[]
+
+  @@map("course_modules")
+}
+
+model CourseLesson {
+  id          String   @id @default(cuid())
+  moduleId    String
+  name        String
+  description String?
+  type        LessonType @default(VIDEO)
+  content     Json?
+  videoUrl    String?
+  duration    Int?
+  sortOrder   Int        @default(0)
+  isPreview   Boolean    @default(false)
+  dripDelay   Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  module   CourseModule     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress LessonProgress[]
+
+  @@map("course_lessons")
+}
+
+enum LessonType {
+  VIDEO
+  TEXT
+  QUIZ
+  DOWNLOAD
+  ASSIGNMENT
+}
+
+model CourseEnrollment {
+  id           String   @id @default(cuid())
+  courseId     String
+  contactId    String
+  status       EnrollmentStatus @default(ACTIVE)
+  progress     Int      @default(0)
+  startedAt    DateTime @default(now())
+  completedAt  DateTime?
+  expiresAt    DateTime?
+  certificateUrl String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  course          Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  contact         Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  lessonProgress  LessonProgress[]
+
+  @@unique([courseId, contactId])
+  @@map("course_enrollments")
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  CANCELED
+}
+
+model LessonProgress {
+  id           String   @id @default(cuid())
+  enrollmentId String
+  lessonId     String
+  status       LessonProgressStatus @default(NOT_STARTED)
+  progress     Int      @default(0)
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  enrollment CourseEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lesson     CourseLesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, lessonId])
+  @@map("lesson_progress")
+}
+
+enum LessonProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+// ============================================
+// LINE Integration (UTAGE Features)
+// ============================================
+
+model LineAccount {
+  id                String   @id @default(cuid())
+  contactId         String
+  lineUserId        String   @unique
+  displayName       String?
+  pictureUrl        String?
+  statusMessage     String?
+  language          String?
+  isBlocked         Boolean  @default(false)
+  followedAt        DateTime?
+  unfollowedAt      DateTime?
+  richMenuId        String?
+  tags              String[]
+  customFields      Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages     LineMessage[]
+  chatSessions LineChat[]
+
+  @@index([lineUserId])
+  @@map("line_accounts")
+}
+
+model LineMessage {
+  id            String   @id @default(cuid())
+  lineAccountId String
+  direction     MessageDirection
+  type          LineMessageType
+  content       Json
+  status        LineMessageStatus @default(PENDING)
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  error         String?
+  createdAt     DateTime @default(now())
+
+  lineAccount LineAccount @relation(fields: [lineAccountId], references: [id], onDelete: Cascade)
+
+  @@index([lineAccountId])
+  @@map("line_messages")
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum LineMessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  STICKER
+  LOCATION
+  TEMPLATE
+  FLEX
+  RICHMENU
+}
+
+enum LineMessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model LineChat {
+  id            String   @id @default(cuid())
+  lineAccountId String
+  status        LineChatStatus @default(OPEN)
+  assignedTo    String?
+  lastMessageAt DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  lineAccount LineAccount @relation(fields: [lineAccountId], references: [id], onDelete: Cascade)
+
+  @@map("line_chats")
+}
+
+enum LineChatStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+model LineRichMenu {
+  id          String   @id @default(cuid())
+  richMenuId  String   @unique
+  name        String
+  chatBarText String?
+  size        Json
+  areas       Json
+  imageUrl    String?
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("line_rich_menus")
+}
+
+// ============================================
+// Audit Logs
+// ============================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  actorId     String?
+  actorType   ActorType @default(USER)
+  action      String
+  entityType  String
+  entityId    String?
+  oldValue    Json?
+  newValue    Json?
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  actor     User?      @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  API
+  WEBHOOK
+}
