@@ -1,6 +1,12 @@
 import { PrismaClient } from '@prisma/client'
+import { PrismaPg } from '@prisma/adapter-pg'
+import { Pool } from 'pg'
+import { hash } from 'bcryptjs'
 
-const prisma = new PrismaClient()
+const connectionString = process.env.DATABASE_URL
+const pool = new Pool({ connectionString })
+const adapter = new PrismaPg(pool)
+const prisma = new PrismaClient({ adapter })
 
 async function main() {
   console.log('🌱 Seeding database...')
@@ -106,12 +112,18 @@ async function main() {
 
   // Create a demo user and workspace (for development)
   if (process.env.NODE_ENV === 'development') {
+    // テストユーザーのパスワードをハッシュ化
+    const testPassword = await hash('Test1234!', 12)
+
     const demoUser = await prisma.user.upsert({
-      where: { email: 'demo@sakaduki.dev' },
-      update: {},
+      where: { email: 'test@example.com' },
+      update: {
+        passwordHash: testPassword,
+      },
       create: {
-        email: 'demo@sakaduki.dev',
-        firstName: 'Demo',
+        email: 'test@example.com',
+        passwordHash: testPassword,
+        firstName: 'Test',
         lastName: 'User',
         timezone: 'Asia/Tokyo',
         language: 'ja',

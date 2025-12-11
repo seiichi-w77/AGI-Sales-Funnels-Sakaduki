@@ -1,6 +1,0 @@
-export { FunnelEditor } from './FunnelEditor'
-export { EditorCanvas } from './EditorCanvas'
-export { EditorSidebar } from './EditorSidebar'
-export { EditorToolbar } from './EditorToolbar'
-export { EditorPropertiesPanel } from './EditorPropertiesPanel'
-export * from './types'

@@ -20,8 +20,9 @@ model User {
   firstName           String?
   lastName            String?
   profileImageUrl     String?
-  timezone            String    @default("UTC")
-  language            String    @default("en")
+  timezone            String    @default("Asia/Tokyo")
+  language            String    @default("ja")
+  dateFormat          String    @default("YYYY/MM/DD")
   phoneNumber         String?
   status              UserStatus @default(ACTIVE)
   isEmailVerified     Boolean   @default(false)
@@ -41,6 +42,7 @@ model User {
   ownedWorkspaces     Workspace[]  @relation("WorkspaceOwner")
   auditLogs           AuditLog[]   @relation("AuditLogActor")
   contacts            Contact[]    @relation("ContactOwner")
+  affiliates          Affiliate[]
 
   @@index([email])
   @@map("users")
@@ -136,6 +138,8 @@ model Workspace {
   workflows       Workflow[]
   emailCampaigns  EmailCampaign[]
   courses         Course[]
+  affiliatePrograms AffiliateProgram[]
+  lineOfficialAccounts LineOfficialAccount[]
 
   @@index([slug])
   @@index([ownerId])
@@ -299,13 +303,14 @@ model Product {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  prices         ProductPrice[]
-  variants       ProductVariant[]
-  orderItems     OrderItem[]
-  funnelProducts FunnelProduct[]
-  courseProduct  Course?
-  cartItems      CartItem[]
+  workspace          Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  prices             ProductPrice[]
+  variants           ProductVariant[]
+  orderItems         OrderItem[]
+  funnelProducts     FunnelProduct[]
+  courseProduct      Course?
+  cartItems          CartItem[]
+  affiliateProducts  AffiliateProduct[]
 
   @@unique([workspaceId, slug])
   @@index([workspaceId])
@@ -1100,6 +1105,190 @@ model LineRichMenu {
   @@map("line_rich_menus")
 }
 
+// LINE公式アカウント連携設定
+model LineOfficialAccount {
+  id                        String   @id @default(cuid())
+  workspaceId               String
+  name                      String   // アカウント表示名
+  providerName              String   // プロバイダー名
+
+  // Messaging API認証情報
+  messagingChannelId        String   @unique
+  messagingChannelSecret    String
+  messagingAccessToken      String?  // 長期アクセストークン
+
+  // LINEログイン認証情報
+  loginChannelId            String?  @unique
+  loginChannelSecret        String?
+
+  // Webhook設定
+  webhookUrl                String?  // 自動生成
+  webhookEnabled            Boolean  @default(false)
+  webhookVerified           Boolean  @default(false)
+
+  // アカウント情報
+  basicId                   String?  // @xxxxx形式のID
+  pictureUrl                String?
+  friendCount               Int      @default(0)
+
+  // 月間メッセージ使用量
+  monthlyMessageLimit       Int      @default(200)  // フリープランは200
+  monthlyMessageUsed        Int      @default(0)
+  messageUsageResetAt       DateTime?
+
+  status                    LineOfficialAccountStatus @default(PENDING)
+  connectedAt               DateTime?
+  lastSyncedAt              DateTime?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  broadcasts  LineBroadcast[]
+  templates   LineTemplate[]
+  testRecipients LineTestRecipient[]
+
+  @@index([workspaceId])
+  @@map("line_official_accounts")
+}
+
+enum LineOfficialAccountStatus {
+  PENDING      // 連携待ち
+  CONNECTED    // 連携済み
+  DISCONNECTED // 切断
+  ERROR        // エラー
+}
+
+// LINE一斉送信
+model LineBroadcast {
+  id                    String   @id @default(cuid())
+  lineOfficialAccountId String
+  name                  String
+  messages              Json     // メッセージ配列
+  conditions            Json?    // 配信条件
+  status                LineBroadcastStatus @default(DRAFT)
+
+  // 配信タイミング
+  scheduledAt           DateTime?
+  sentAt                DateTime?
+  completedAt           DateTime?
+
+  // 統計
+  totalRecipients       Int      @default(0)
+  sentCount             Int      @default(0)
+  deliveredCount        Int      @default(0)
+  failedCount           Int      @default(0)
+  openedCount           Int      @default(0)
+  clickedCount          Int      @default(0)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  lineOfficialAccount LineOfficialAccount @relation(fields: [lineOfficialAccountId], references: [id], onDelete: Cascade)
+  errors              LineBroadcastError[]
+
+  @@index([lineOfficialAccountId])
+  @@map("line_broadcasts")
+}
+
+enum LineBroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+// LINE配信エラー
+model LineBroadcastError {
+  id              String   @id @default(cuid())
+  broadcastId     String
+  lineUserId      String
+  errorCode       String
+  errorMessage    String
+  errorCategory   LineErrorCategory
+  status          LineErrorStatus @default(PENDING)
+  retryCount      Int      @default(0)
+  lastRetryAt     DateTime?
+  resolvedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  broadcast LineBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  @@index([broadcastId])
+  @@map("line_broadcast_errors")
+}
+
+enum LineErrorCategory {
+  RATE_LIMIT
+  NETWORK
+  API_ERROR
+  INVALID_USER
+  INVALID_MESSAGE
+  UNKNOWN
+}
+
+enum LineErrorStatus {
+  PENDING
+  RETRYING
+  RESENT
+  FAILED
+  SKIPPED
+}
+
+// LINEテンプレート
+model LineTemplate {
+  id                    String   @id @default(cuid())
+  lineOfficialAccountId String
+  groupId               String?
+  name                  String
+  messageType           LineMessageType
+  content               Json     // メッセージ内容
+  variables             Json?    // 使用変数
+  isActive              Boolean  @default(true)
+  usageCount            Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  lineOfficialAccount LineOfficialAccount @relation(fields: [lineOfficialAccountId], references: [id], onDelete: Cascade)
+  group               LineTemplateGroup?  @relation(fields: [groupId], references: [id])
+
+  @@index([lineOfficialAccountId])
+  @@map("line_templates")
+}
+
+// LINEテンプレートグループ
+model LineTemplateGroup {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  templates LineTemplate[]
+
+  @@index([workspaceId])
+  @@map("line_template_groups")
+}
+
+// LINEテスト送信先
+model LineTestRecipient {
+  id                    String   @id @default(cuid())
+  lineOfficialAccountId String
+  lineUserId            String
+  displayName           String?
+  note                  String?
+  createdAt             DateTime @default(now())
+
+  lineOfficialAccount LineOfficialAccount @relation(fields: [lineOfficialAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([lineOfficialAccountId, lineUserId])
+  @@map("line_test_recipients")
+}
+
 // ============================================
 // Audit Logs
 // ============================================
@@ -1238,4 +1427,241 @@ model Customer {
   @@index([workspaceId])
   @@index([email])
   @@map("customers")
+}
+
+// ============================================
+// Affiliate System
+// ============================================
+
+model AffiliateProgram {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  slug            String
+  description     String?  @db.Text
+  commissionType  CommissionType @default(PERCENTAGE)
+  commissionRate  Int      @default(10) // Percentage or fixed amount in cents
+  tier2Rate       Int?     // Second tier commission rate
+  cookieDays      Int      @default(45)
+  minPayout       Int      @default(5000) // Minimum payout in cents
+  autoApprove     Boolean  @default(false)
+  termsUrl        String?
+  status          AffiliateProgramStatus @default(ACTIVE)
+  settings        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  affiliates  Affiliate[]
+  products    AffiliateProduct[]
+  resources   AffiliateResource[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@map("affiliate_programs")
+}
+
+enum AffiliateProgramStatus {
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED
+}
+
+model Affiliate {
+  id              String   @id @default(cuid())
+  programId       String
+  userId          String?
+  email           String
+  firstName       String?
+  lastName        String?
+  company         String?
+  phone           String?
+  website         String?
+  affiliateCode   String   @unique
+  paypalEmail     String?
+  bankInfo        Json?
+  status          AffiliateStatus @default(PENDING)
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  tier            Int      @default(1)
+  referredBy      String?  // Tier 2 - ID of affiliate who referred this one
+  customCommission Int?    // Override program commission
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  program         AffiliateProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  user            User?             @relation(fields: [userId], references: [id])
+  referrer        Affiliate?        @relation("AffiliateReferrals", fields: [referredBy], references: [id])
+  referrals       Affiliate[]       @relation("AffiliateReferrals")
+  links           AffiliateLink[]
+  clicks          AffiliateClick[]
+  conversions     AffiliateConversion[]
+  tier2Conversions AffiliateConversion[] @relation("Tier2Conversions")
+  payouts         AffiliatePayout[]
+
+  @@index([programId])
+  @@index([userId])
+  @@index([affiliateCode])
+  @@map("affiliates")
+}
+
+enum AffiliateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+model AffiliateProduct {
+  id              String   @id @default(cuid())
+  programId       String
+  productId       String
+  commissionType  CommissionType?
+  commissionRate  Int?     // Override product-specific commission
+  isEnabled       Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  program AffiliateProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  product Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, productId])
+  @@map("affiliate_products")
+}
+
+model AffiliateLink {
+  id            String   @id @default(cuid())
+  affiliateId   String
+  destinationUrl String
+  customSlug    String?
+  name          String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  affiliate Affiliate        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  clicks    AffiliateClick[]
+
+  @@index([affiliateId])
+  @@map("affiliate_links")
+}
+
+model AffiliateClick {
+  id           String   @id @default(cuid())
+  affiliateId  String
+  linkId       String?
+  ipAddress    String?
+  userAgent    String?  @db.Text
+  referer      String?
+  landingPage  String?
+  cookieId     String?
+  convertedAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  affiliate Affiliate      @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  link      AffiliateLink? @relation(fields: [linkId], references: [id])
+
+  @@index([affiliateId])
+  @@index([cookieId])
+  @@map("affiliate_clicks")
+}
+
+model AffiliateConversion {
+  id              String   @id @default(cuid())
+  affiliateId     String
+  orderId         String?
+  clickId         String?
+  amount          Int      // Total order amount
+  commissionAmount Int     // Calculated commission
+  tier2AffiliateId String? // If this is a tier 2 commission
+  tier2Commission Int?
+  status          ConversionStatus @default(PENDING)
+  paidAt          DateTime?
+  payoutId        String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  affiliate     Affiliate        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  tier2Affiliate Affiliate?      @relation("Tier2Conversions", fields: [tier2AffiliateId], references: [id])
+  payout        AffiliatePayout? @relation(fields: [payoutId], references: [id])
+
+  @@index([affiliateId])
+  @@index([orderId])
+  @@map("affiliate_conversions")
+}
+
+enum ConversionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  REFUNDED
+}
+
+model AffiliatePayout {
+  id            String   @id @default(cuid())
+  affiliateId   String
+  amount        Int
+  method        PayoutMethod
+  status        PayoutStatus @default(PENDING)
+  transactionId String?
+  processedAt   DateTime?
+  notes         String?  @db.Text
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  affiliate   Affiliate             @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  conversions AffiliateConversion[]
+
+  @@index([affiliateId])
+  @@map("affiliate_payouts")
+}
+
+enum PayoutMethod {
+  PAYPAL
+  BANK_TRANSFER
+  CHECK
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model AffiliateResource {
+  id          String   @id @default(cuid())
+  programId   String
+  type        ResourceType
+  name        String
+  description String?
+  url         String
+  width       Int?
+  height      Int?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  program AffiliateProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@index([programId])
+  @@map("affiliate_resources")
+}
+
+enum ResourceType {
+  BANNER
+  TEXT_LINK
+  EMAIL_SWIPE
+  VIDEO
+  PDF
 }

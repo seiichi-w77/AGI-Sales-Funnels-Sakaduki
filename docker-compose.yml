@@ -1,0 +1,49 @@
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: sakaduki-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sakaduki
+      POSTGRES_PASSWORD: sakaduki_password
+      POSTGRES_DB: sakaduki_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sakaduki -d sakaduki_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sakaduki-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://sakaduki:sakaduki_password@db:5432/sakaduki_db
+      NODE_ENV: development
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: dev-secret-key-change-in-production
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./app:/app/app:ro
+      - ./components:/app/components:ro
+      - ./lib:/app/lib:ro
+      - ./prisma:/app/prisma:ro
+      - ./messages:/app/messages:ro
+      - ./i18n:/app/i18n:ro
+    command: >
+      sh -c "npx prisma migrate deploy && npm run dev"
+
+volumes:
+  postgres_data:

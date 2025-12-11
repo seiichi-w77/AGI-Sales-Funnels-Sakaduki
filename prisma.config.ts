@@ -3,12 +3,22 @@
 import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 
+// DATABASE_URLが設定されていない場合のフォールバック
+const getDatabaseUrl = () => {
+  try {
+    return env("DATABASE_URL");
+  } catch {
+    // 開発環境用のデフォルト値（prisma generateのみで使用）
+    return process.env.DATABASE_URL || "postgresql://localhost:5432/sakaduki";
+  }
+};
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    url: env("DATABASE_URL"),
+    url: getDatabaseUrl(),
   },
 });
